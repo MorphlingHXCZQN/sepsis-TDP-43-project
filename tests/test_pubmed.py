@@ -1,13 +1,13 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import Mock
-import json
 
 import pytest
 
 from scraper import pubmed
-from scraper.sepsis_project import LiteratureCrawler
+from scraper.sepsis_project import LiteratureCrawler, sanitize_title
 
 
 class DummyResponse:
@@ -133,3 +133,10 @@ def test_crawler_writes_outputs(tmp_path: Path, monkeypatch, sample_article_xml)
         citation_files = list((tmp_path / "citations" / key).glob("*.nbib"))
         assert citation_files, "Expected citation file to be written"
         assert citation_files[0].read_bytes() == b"NBIB"
+
+
+def test_sanitize_title_handles_problematic_characters():
+    title = "A complex: title/with?characters*"
+    sanitized = sanitize_title(title)
+    assert sanitized.startswith("A_complex_title")
+    assert "?" not in sanitized

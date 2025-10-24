@@ -1,18 +1,25 @@
 """Utilities for crawling PubMed articles related to serum TDP-43 and sepsis."""
 from __future__ import annotations
 
+import json
 import logging
 import time
 from dataclasses import dataclass
-from typing import Iterable, List
+from typing import Iterable, List, Mapping
 from urllib import error, parse, request
-import json
+from xml.etree import ElementTree as ET
 
 
 LOGGER = logging.getLogger(__name__)
 
+EUTILS_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
+USER_AGENT = "TDP43-Sepsis-Project/1.0"
+DEFAULT_RETRIES = 3
+DEFAULT_BACKOFF = 0.5
+DEFAULT_TIMEOUT = 20
 
-@dataclass
+
+@dataclass(slots=True)
 class Article:
     """Structured representation of a PubMed article."""
 
@@ -25,12 +32,8 @@ class Article:
     url: str
 
 
-EUTILS_BASE = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
-USER_AGENT = "TDP43-Sepsis-Project/1.0"
-
-
 class HttpResponse:
-    """Minimal HTTP response wrapper mimicking the subset of requests.Response we need."""
+    """Minimal HTTP response wrapper mimicking the subset of ``requests.Response`` used."""
 
     def __init__(self, *, status_code: int, content: bytes):
         self.status_code = status_code
@@ -41,31 +44,43 @@ class HttpResponse:
         return json.loads(self.text or "{}")
 
 
-def _request_with_backoff(url: str, params: dict[str, str], *, retries: int = 3, delay: float = 0.5) -> HttpResponse:
+def _request_with_backoff(
+    url: str,
+    params: Mapping[str, str],
+    *,
+    retries: int = DEFAULT_RETRIES,
+    delay: float = DEFAULT_BACKOFF,
+    timeout: int = DEFAULT_TIMEOUT,
+) -> HttpResponse:
     """Send a GET request with exponential backoff on transient failures."""
 
     headers = {"User-Agent": USER_AGENT}
-    for attempt in range(retries):
+    last_error: Exception | None = None
+    for attempt in range(1, retries + 1):
         try:
             query = parse.urlencode(params)
             req = request.Request(f"{url}?{query}", headers=headers)
-            with request.urlopen(req, timeout=20) as resp:
+            with request.urlopen(req, timeout=timeout) as resp:
                 content = resp.read()
-                response = HttpResponse(status_code=resp.status, content=content)
+                return HttpResponse(status_code=resp.status, content=content)
         except error.HTTPError as exc:  # pragma: no cover - network failures are rare in tests
+            last_error = exc
             LOGGER.warning("Request failed (%s): %s", exc.code, exc.reason)
             response = HttpResponse(status_code=exc.code, content=exc.read())
         except error.URLError as exc:  # pragma: no cover
+            last_error = exc
             LOGGER.warning("Network error: %s", exc.reason)
             response = HttpResponse(status_code=0, content=b"")
+        except Exception as exc:  # pragma: no cover - unexpected runtime errors
+            last_error = exc
+            LOGGER.warning("Unexpected error: %s", exc)
+            response = HttpResponse(status_code=0, content=b"")
 
-        if response.status_code == 200:
-            return response
         LOGGER.warning("Request failed (%s): %s", response.status_code, response.text)
-        time.sleep(delay * (2 ** attempt))
-    if response.status_code != 200:
-        raise RuntimeError(f"Failed to fetch data from {url} after {retries} attempts")
-    return response
+        if attempt < retries:
+            time.sleep(delay * (2 ** (attempt - 1)))
+
+    raise RuntimeError(f"Failed to fetch data from {url} after {retries} attempts") from last_error
 
 
 def search_pubmed(query: str, *, retmax: int = 25) -> List[str]:
@@ -97,8 +112,6 @@ def fetch_pubmed_details(pmids: Iterable[str]) -> List[Article]:
     }
     url = f"{EUTILS_BASE}/efetch.fcgi"
     response = _request_with_backoff(url, params)
-
-    from xml.etree import ElementTree as ET
 
     root = ET.fromstring(response.content)
     articles: List[Article] = []

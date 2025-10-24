@@ -32,3 +32,16 @@ managers.
 ```bash
 pytest
 ```
+
+### Recommended development workflow
+
+- **PyCharm (or another full IDE)** is best when iterating on the crawler code
+  itself because it provides immediate feedback on typing issues, formatting,
+  and packaging structure.
+- **Jupyter notebooks** work well for exploratory analysis of the downloaded
+  JSON and citation files when you want to quickly inspect or visualize the
+  corpus.
+
+Using both environments side-by-side mirrors typical literature-review
+pipelines: maintain the production crawler in PyCharm while experimenting with
+data post-processing in Jupyter.
