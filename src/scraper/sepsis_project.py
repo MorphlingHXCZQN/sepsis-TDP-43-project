@@ -29,21 +29,39 @@ class LiteratureCrawler:
         *,
         output_dir: Path | str = "data",
         queries: Mapping[str, str] | None = None,
+        max_articles: int = 50,
+        citation_root: Path | str | None = None,
+        skip_citations: bool = False,
     ) -> None:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.queries = dict(queries or DEFAULT_QUERIES)
+        self.max_articles = max(1, int(max_articles))
+        self.skip_citations = skip_citations
+        self.citation_root = (
+            Path(citation_root)
+            if citation_root is not None
+            else self.output_dir / "citations"
+        )
+        self.citation_root.mkdir(parents=True, exist_ok=True)
+        self._latest_report: dict[str, dict[str, int]] = {}
 
     def run(self) -> dict[str, list[Article]]:
         """Run the multi-stage crawling workflow."""
 
         results: dict[str, list[Article]] = {}
+        self._latest_report = {}
         for name, query in self.queries.items():
             LOGGER.info("Crawling PubMed for %s", query)
-            articles = crawl_pubmed_articles(query, retmax=50)
+            articles = crawl_pubmed_articles(query, retmax=self.max_articles)
             results[name] = articles
             self._write_results(name, articles)
-            self._download_citations(name, articles)
+            saved_citations, missing_pmids = self._download_citations(name, articles)
+            self._latest_report[name] = {
+                "articles_retrieved": len(articles),
+                "citations_saved": saved_citations,
+                "missing_pmids": missing_pmids,
+            }
         self._write_summary(results)
         return results
 
@@ -82,12 +100,20 @@ class LiteratureCrawler:
         summary_path.write_text("\n".join(summary_lines), encoding="utf-8")
         LOGGER.info("Saved summary to %s", summary_path)
 
-    def _download_citations(self, name: str, articles: Iterable[Article]) -> None:
-        citation_dir = self.output_dir / "citations" / name
+    def _download_citations(self, name: str, articles: Iterable[Article]) -> tuple[int, int]:
+        citation_dir = self.citation_root / name
         citation_dir.mkdir(parents=True, exist_ok=True)
 
+        if self.skip_citations:
+            LOGGER.info("Skipping citation downloads for query '%s'", name)
+            missing_pmids = sum(1 for article in articles if not article.pmid)
+            return 0, missing_pmids
+
+        saved = 0
+        missing_pmids = 0
         for article in articles:
             if not article.pmid:
+                missing_pmids += 1
                 LOGGER.debug(
                     "Skipping citation download for article without PMID: %s",
                     article.title,
@@ -113,7 +139,15 @@ class LiteratureCrawler:
 
             citation_path.write_bytes(citation_bytes)
             LOGGER.info("Saved EndNote citation for PMID %s to %s", article.pmid, citation_path)
+            saved += 1
 
+        return saved, missing_pmids
+
+    @property
+    def report(self) -> Mapping[str, dict[str, int]]:
+        """Return the metrics collected during the most recent run."""
+
+        return dict(self._latest_report)
 
 def sanitize_title(title: str, *, max_length: int = MAX_FILENAME_LENGTH) -> str:
     """Generate a filesystem-friendly slug from an article title."""

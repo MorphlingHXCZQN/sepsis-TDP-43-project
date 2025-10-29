@@ -121,7 +121,7 @@ def test_crawler_writes_outputs(tmp_path: Path, monkeypatch, sample_article_xml)
     monkeypatch.setattr(pubmed, "_request_with_backoff", fake_request)
     monkeypatch.setattr("scraper.sepsis_project.fetch_endnote_citation", Mock(return_value=b"NBIB"))
 
-    crawler = LiteratureCrawler(output_dir=tmp_path)
+    crawler = LiteratureCrawler(output_dir=tmp_path, max_articles=40)
     results = crawler.run()
 
     assert all(results[key] for key in ["tdp43_sepsis", "tdp43_general", "traditional_markers"])
@@ -133,6 +133,77 @@ def test_crawler_writes_outputs(tmp_path: Path, monkeypatch, sample_article_xml)
         citation_files = list((tmp_path / "citations" / key).glob("*.nbib"))
         assert citation_files, "Expected citation file to be written"
         assert citation_files[0].read_bytes() == b"NBIB"
+
+    report = crawler.report
+    assert set(report) == {"tdp43_sepsis", "tdp43_general", "traditional_markers"}
+    for metrics in report.values():
+        assert metrics["articles_retrieved"] == 1
+        assert metrics["citations_saved"] == 1
+        assert metrics["missing_pmids"] == 0
+
+
+def test_crawler_respects_max_articles(tmp_path: Path, monkeypatch):
+    calls: list[int] = []
+
+    def fake_crawl(query: str, *, retmax: int) -> list[pubmed.Article]:
+        calls.append(retmax)
+        return []
+
+    monkeypatch.setattr("scraper.sepsis_project.crawl_pubmed_articles", fake_crawl)
+
+    crawler = LiteratureCrawler(output_dir=tmp_path, max_articles=5, skip_citations=True)
+    crawler.run()
+
+    assert calls == [5, 5, 5]
+
+
+def test_crawler_skip_citations(tmp_path: Path, monkeypatch):
+    article = pubmed.Article(
+        pmid="123",
+        title="Test",
+        authors=["Smith"],
+        journal="Journal",
+        publication_date="2024",
+        abstract="",
+        url="https://example.com",
+    )
+
+    monkeypatch.setattr(
+        "scraper.sepsis_project.crawl_pubmed_articles",
+        Mock(return_value=[article]),
+    )
+    crawler = LiteratureCrawler(output_dir=tmp_path, max_articles=2, skip_citations=True)
+    crawler.run()
+
+    assert not list((tmp_path / "citations").rglob("*.nbib"))
+    metrics = crawler.report["tdp43_sepsis"]
+    assert metrics["citations_saved"] == 0
+    assert metrics["missing_pmids"] == 0
+
+
+def test_crawler_reports_missing_pmids(tmp_path: Path, monkeypatch):
+    article_missing = pubmed.Article(
+        pmid="",
+        title="Missing PMID",
+        authors=["Lee"],
+        journal="Journal",
+        publication_date="2024",
+        abstract="",
+        url="https://example.com",
+    )
+
+    monkeypatch.setattr(
+        "scraper.sepsis_project.crawl_pubmed_articles",
+        Mock(return_value=[article_missing]),
+    )
+    monkeypatch.setattr("scraper.sepsis_project.fetch_endnote_citation", Mock())
+
+    crawler = LiteratureCrawler(output_dir=tmp_path, skip_citations=False)
+    crawler.run()
+
+    metrics = crawler.report["tdp43_sepsis"]
+    assert metrics["citations_saved"] == 0
+    assert metrics["missing_pmids"] == 1
 
 
 def test_sanitize_title_handles_problematic_characters():

@@ -20,12 +20,23 @@ workflow previously carried out manually:
 python -m scraper.cli --output-dir data
 ```
 
+Key options:
+
+- `--queries path/to/queries.json` – override the default queries with your own
+  mapping of names to PubMed search strings.
+- `--max-articles 100` – control how many results are downloaded per query,
+  which is helpful for stress testing or keeping the dataset small while
+  iterating.
+- `--skip-citations` – disable EndNote downloads, which is useful when running
+  repeated tests or when network bandwidth is constrained.
+
 The command will create JSON dumps for each query alongside a consolidated
 `summary.md` file describing the retrieved papers. For every article, the
 crawler also saves an EndNote (`.nbib`) citation named after the publication
 title under `data/citations/<query_name>/`, providing one-to-one mapping between
 the JSON records and reference files for easy importing into reference
-managers.
+managers. When `--skip-citations` is used the JSON/Markdown outputs are still
+generated and the run report will reflect that citation downloads were skipped.
 
 ### Testing
 
