@@ -26,6 +26,11 @@ download issues (for example citation failures or network pressure) and retry
 with safer defaults such as skipping citation downloads or lowering the
 `--max-articles` limit.
 
+The agent cascades these fixes when necessary: it will first disable citation
+downloads after persistent NBIB errors and then progressively shrink the fetch
+batch size until a successful crawl completes. The automated test suite covers
+these self-healing paths so regressions are caught early.
+
 ```bash
 python -m scraper.cli --output-dir data --agent-mode --max-attempts 5
 ```

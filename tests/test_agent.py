@@ -35,6 +35,22 @@ class MissingPmidsCrawler:
         return {"query": ["article"]}
 
 
+class MultiFailureCrawler:
+    """Simulate a crawler that needs multiple fixes before succeeding."""
+
+    def __init__(self, *, skip_citations: bool, max_articles: int, **_: object) -> None:
+        self.skip_citations = skip_citations
+        self.max_articles = max_articles
+        self.report = {"query": {"articles_retrieved": 1, "citations_saved": int(skip_citations), "missing_pmids": 0}}
+
+    def run(self) -> dict[str, list[str]]:
+        if not self.skip_citations:
+            raise RuntimeError("Citation fetch failed due to network error")
+        if self.max_articles > 10:
+            raise RuntimeError("Failed to fetch data from server during fetch")
+        return {"query": ["article"]}
+
+
 def test_agent_enables_skip_citations(tmp_path: Path) -> None:
     config = AgentConfig(output_dir=tmp_path, queries={"query": "term"}, max_articles=40, skip_citations=False)
     agent = CrawlerAgent(config=config, max_attempts=2, crawler_factory=CitationFailingCrawler)
@@ -68,3 +84,22 @@ def test_agent_notes_missing_pmids(tmp_path: Path) -> None:
     assert result.success is True
     assert any("without PMIDs" in note for note in result.notes)
     assert any("saved no citations" in note for note in result.notes)
+
+
+def test_agent_resolves_multiple_failures(tmp_path: Path) -> None:
+    config = AgentConfig(output_dir=tmp_path, queries={"query": "term"}, max_articles=40, skip_citations=False)
+    agent = CrawlerAgent(config=config, max_attempts=4, crawler_factory=MultiFailureCrawler)
+
+    result = agent.run()
+
+    assert result.success is True
+    assert result.attempts == 4
+    assert agent.config.skip_citations is True
+    assert agent.config.max_articles == 10
+    assert [error.fix_applied for error in result.errors] == [
+        "Enabled skip_citations after citation failure",
+        "Reduced max_articles to 20 after fetch failure",
+        "Reduced max_articles to 10 after fetch failure",
+    ]
+    assert any("skip_citations" in note for note in result.notes)
+    assert any("Reduced max_articles".lower() in note.lower() for note in result.notes)
