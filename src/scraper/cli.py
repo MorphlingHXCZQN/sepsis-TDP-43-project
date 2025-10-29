@@ -36,6 +36,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Disable downloading EndNote citation files (useful for dry runs).",
     )
     parser.add_argument(
+        "--agent-mode",
+        action="store_true",
+        help="Run the self-correcting agent instead of the raw crawler.",
+    )
+    parser.add_argument(
+        "--max-attempts",
+        type=int,
+        default=3,
+        help="Maximum attempts the agent will try when correcting errors.",
+    )
+    parser.add_argument(
         "--log-level",
         default="INFO",
         help="Logging level (e.g. INFO, DEBUG).",
@@ -58,6 +69,36 @@ def main(argv: list[str] | None = None) -> None:
         queries = {str(key): str(value) for key, value in queries_data.items()}
     else:
         queries = None
+
+    if args.agent_mode:
+        from .agent import AgentConfig, CrawlerAgent
+
+        agent_config = AgentConfig(
+            output_dir=args.output_dir,
+            queries=queries,
+            max_articles=args.max_articles,
+            skip_citations=args.skip_citations,
+        )
+        agent = CrawlerAgent(config=agent_config, max_attempts=args.max_attempts)
+        result = agent.run()
+        if not result.success:
+            logging.error(
+                "Agent failed after %d attempts", result.attempts
+            )
+            for error in result.errors:
+                logging.error(
+                    "Attempt %d error: %s (fix applied: %s)",
+                    error.attempt,
+                    error.message,
+                    error.fix_applied or "none",
+                )
+            raise SystemExit(1)
+        logging.info(
+            "Agent completed successfully after %d attempt(s)", result.attempts
+        )
+        for note in result.notes:
+            logging.info("NOTE: %s", note)
+        return
 
     crawler = LiteratureCrawler(
         output_dir=args.output_dir,

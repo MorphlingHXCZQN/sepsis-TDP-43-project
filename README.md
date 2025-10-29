@@ -20,6 +20,16 @@ workflow previously carried out manually:
 python -m scraper.cli --output-dir data
 ```
 
+To enable the autonomous agent that can retry failed runs and apply
+auto-corrections, append the `--agent-mode` flag. The agent will detect
+download issues (for example citation failures or network pressure) and retry
+with safer defaults such as skipping citation downloads or lowering the
+`--max-articles` limit.
+
+```bash
+python -m scraper.cli --output-dir data --agent-mode --max-attempts 5
+```
+
 Key options:
 
 - `--queries path/to/queries.json` – override the default queries with your own
@@ -29,6 +39,9 @@ Key options:
   iterating.
 - `--skip-citations` – disable EndNote downloads, which is useful when running
   repeated tests or when network bandwidth is constrained.
+- `--agent-mode` – run the self-healing agent so that retries and automatic
+  fixes (like toggling `--skip-citations`) are applied when the first attempt
+  fails.
 
 The command will create JSON dumps for each query alongside a consolidated
 `summary.md` file describing the retrieved papers. For every article, the
